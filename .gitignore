@@ -1,0 +1,46 @@
+# =========================================================
+#  SECURITY: DO NOT COMMIT ADMIN TOOLS OR CUSTOMER DATA
+# =========================================================
+Admin_Tools/
+admin_keygen.py
+issued_keys.json
+license.dat
+.sec_state
+
+# =========================================================
+#  SESSIONS & CREDENTIALS (PREVENT GOOGLE SESSION LEAKS)
+# =========================================================
+profiles/
+backups/
+*.dat
+*.db
+*.db-shm
+*.db-wal
+*.pbtxt
+*.log
+*.sqlite
+Cookies*
+Singleton*
+lockfile
+
+# =========================================================
+#  PYTHON & BUILD ARTIFACTS
+# =========================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.spec
+build/
+dist/
+.env
+.venv/
+env/
+venv/
+
+# =========================================================
+#  IDE & OS
+# =========================================================
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
