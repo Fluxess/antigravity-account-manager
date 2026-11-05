@@ -28,7 +28,7 @@ PLANS = {
     "365d": {"name": "1 Год", "days": 365, "price": "399 ₽"},
 }
 
-DEFAULT_SERVER_URL = "http://127.0.0.1:5000"
+DEFAULT_SERVER_URL = "https://antigravity-account-manager.onrender.com"
 
 
 # --- Anti-Tamper & Security Utilities ---
@@ -132,13 +132,18 @@ class LicenseManager:
         except Exception:
             pass
 
-    # --- Online Server Communications ---
+    # --- Online Server Communications (with fast 2.5s fallback) ---
     def _try_online_activate(self, key_str: str) -> Tuple[bool, str, Dict[str, Any]]:
         server_url = self._get_server_url()
         try:
             payload = json.dumps({"key": key_str.strip(), "hwid": self.hwid}).encode("utf-8")
-            req = urllib.request.Request(f"{server_url}/api/activate", data=payload, headers={"Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=3) as res:
+            req = urllib.request.Request(
+                f"{server_url}/api/activate",
+                data=payload,
+                headers={"Content-Type": "application/json", "User-Agent": "AntigravityClient/1.0"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=2.5) as res:
                 body = json.loads(res.read().decode("utf-8"))
                 if body.get("success"):
                     return True, body.get("message", "Успешно активировано!"), body
@@ -150,8 +155,13 @@ class LicenseManager:
         server_url = self._get_server_url()
         try:
             payload = json.dumps({"key": key_str.strip(), "hwid": self.hwid}).encode("utf-8")
-            req = urllib.request.Request(f"{server_url}/api/check", data=payload, headers={"Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=3) as res:
+            req = urllib.request.Request(
+                f"{server_url}/api/check",
+                data=payload,
+                headers={"Content-Type": "application/json", "User-Agent": "AntigravityClient/1.0"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=2.5) as res:
                 return json.loads(res.read().decode("utf-8"))
         except Exception:
             return None
@@ -243,7 +253,7 @@ class LicenseManager:
             except Exception as e:
                 return False, f"Ошибка записи файла: {e}"
 
-        # 2. Fallback to local cryptographic check if offline or server offline
+        # 2. Fallback to local cryptographic check if offline or server blocked
         valid, msg, info = self.decode_and_verify_key(key_str, self.hwid)
         if not valid:
             self._record_failed_attempt()
@@ -346,7 +356,7 @@ class LicenseManager:
                     "days_left": 0
                 }
 
-            # Optional online recheck if online mode
+            # Online recheck if online mode
             key_val = data.get("key")
             if key_val and data.get("mode") == "online":
                 online_res = self._try_online_check(key_val)
