@@ -7,6 +7,8 @@ import hashlib
 import base64
 import winreg
 import ctypes
+import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Dict, Any, Tuple, Optional
 
@@ -26,10 +28,12 @@ PLANS = {
     "365d": {"name": "1 Год", "days": 365, "price": "399 ₽"},
 }
 
+DEFAULT_SERVER_URL = "http://127.0.0.1:5000"
+
+
 # --- Anti-Tamper & Security Utilities ---
 
 def is_debugger_present() -> bool:
-    """Checks if a debugger is attached to the process (Anti-Crack / Anti-Debug)."""
     try:
         kernel32 = ctypes.windll.kernel32
         if kernel32.IsDebuggerPresent():
@@ -45,10 +49,7 @@ def is_debugger_present() -> bool:
 
 
 def get_machine_hwid() -> str:
-    """Calculates a unique, stable hardware identifier for this Windows machine."""
     components = []
-    
-    # 1. Windows MachineGuid from Registry
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography", 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
             guid, _ = winreg.QueryValueEx(key, "MachineGuid")
@@ -56,7 +57,6 @@ def get_machine_hwid() -> str:
     except Exception:
         pass
 
-    # 2. System UUID / Motherboard
     try:
         import subprocess
         out = subprocess.check_output("wmic csproduct get uuid", shell=True, text=True, timeout=2)
@@ -66,7 +66,6 @@ def get_machine_hwid() -> str:
     except Exception:
         pass
 
-    # 3. Fallback: Machine identity
     components.append(os.environ.get("COMPUTERNAME", "PC"))
     components.append(os.environ.get("PROCESSOR_IDENTIFIER", "CPU"))
 
@@ -85,6 +84,9 @@ class LicenseManager:
         self.license_file = self.storage_dir / "license.dat"
         self.security_file = self.storage_dir / ".sec_state"
         self.hwid = get_machine_hwid()
+
+    def _get_server_url(self) -> str:
+        return os.environ.get("ANTIGRAVITY_SERVER_URL", DEFAULT_SERVER_URL).rstrip("/")
 
     # --- Anti-Bruteforce Rate Limiter ---
     def _check_rate_limit(self) -> Tuple[bool, str]:
@@ -115,7 +117,6 @@ class LicenseManager:
         attempts = state.get("failed_attempts", 0) + 1
         state["failed_attempts"] = attempts
         if attempts >= 5:
-            # Lock for 60 seconds after 5 failed attempts
             state["locked_until"] = now + 60
             state["failed_attempts"] = 0
         try:
@@ -131,11 +132,34 @@ class LicenseManager:
         except Exception:
             pass
 
+    # --- Online Server Communications ---
+    def _try_online_activate(self, key_str: str) -> Tuple[bool, str, Dict[str, Any]]:
+        server_url = self._get_server_url()
+        try:
+            payload = json.dumps({"key": key_str.strip(), "hwid": self.hwid}).encode("utf-8")
+            req = urllib.request.Request(f"{server_url}/api/activate", data=payload, headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=3) as res:
+                body = json.loads(res.read().decode("utf-8"))
+                if body.get("success"):
+                    return True, body.get("message", "Успешно активировано!"), body
+                return False, body.get("message", "Ошибка активации на сервере"), body
+        except Exception:
+            return False, "Сервер недоступен", {}
+
+    def _try_online_check(self, key_str: str) -> Optional[Dict[str, Any]]:
+        server_url = self._get_server_url()
+        try:
+            payload = json.dumps({"key": key_str.strip(), "hwid": self.hwid}).encode("utf-8")
+            req = urllib.request.Request(f"{server_url}/api/check", data=payload, headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=3) as res:
+                return json.loads(res.read().decode("utf-8"))
+        except Exception:
+            return None
+
     # --- Key Operations ---
 
     @staticmethod
     def generate_key(plan_code: str, hwid: Optional[str] = None, custom_days: Optional[int] = None) -> str:
-        """Generates a signed license key."""
         plan_code = plan_code.lower()
         if plan_code in PLANS:
             days = PLANS[plan_code]["days"]
@@ -189,19 +213,41 @@ class LicenseManager:
             return False, "Не удалось распознать лицензионный ключ!", {}
 
     def activate_key(self, key_str: str) -> Tuple[bool, str]:
-        # Anti-debug verification
         if is_debugger_present():
             return False, "Обнаружена среда отладки. Доступ заблокирован в целях безопасности."
 
-        # Anti-bruteforce check
         allowed, limit_msg = self._check_rate_limit()
         if not allowed:
             return False, limit_msg
 
+        # 1. Try Online Database Activation first
+        online_ok, online_msg, online_info = self._try_online_activate(key_str)
+        if online_ok:
+            self._reset_failed_attempts()
+            days = online_info.get("days_left", 30)
+            now = time.time()
+            expires_at = online_info.get("expires_at", now + (days * 86400))
+            license_data = {
+                "key": key_str.strip(),
+                "plan_code": online_info.get("plan_code", "30d"),
+                "hwid": self.hwid,
+                "activated_at": now,
+                "expires_at": expires_at,
+                "last_check": now,
+                "mode": "online"
+            }
+            try:
+                with open(self.license_file, "w", encoding="utf-8") as f:
+                    f.write(self._seal_license(license_data))
+                return True, online_msg
+            except Exception as e:
+                return False, f"Ошибка записи файла: {e}"
+
+        # 2. Fallback to local cryptographic check if offline or server offline
         valid, msg, info = self.decode_and_verify_key(key_str, self.hwid)
         if not valid:
             self._record_failed_attempt()
-            return False, msg
+            return False, online_msg if online_msg != "Сервер недоступен" else msg
 
         self._reset_failed_attempts()
         days = info["days"]
@@ -220,7 +266,8 @@ class LicenseManager:
             "hwid": self.hwid,
             "activated_at": now,
             "expires_at": expires_at,
-            "last_check": now
+            "last_check": now,
+            "mode": "offline"
         }
 
         sealed = self._seal_license(license_data)
@@ -298,6 +345,20 @@ class LicenseManager:
                     "expires_at": expires_at,
                     "days_left": 0
                 }
+
+            # Optional online recheck if online mode
+            key_val = data.get("key")
+            if key_val and data.get("mode") == "online":
+                online_res = self._try_online_check(key_val)
+                if online_res and not online_res.get("is_valid"):
+                    return {
+                        "is_active": False,
+                        "reason": "blocked_by_server",
+                        "message": online_res.get("message", "Лицензия заблокирована на сервере"),
+                        "hwid": self.hwid,
+                        "expires_at": 0,
+                        "days_left": 0
+                    }
 
             data["last_check"] = now
             try:

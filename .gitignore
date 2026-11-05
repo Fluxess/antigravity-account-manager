@@ -7,6 +7,7 @@ issued_keys.json
 license.dat
 .sec_state
 core/yookassa_config.json
+server/licenses.db
 
 # =========================================================
 #  SESSIONS & CREDENTIALS (PREVENT GOOGLE SESSION LEAKS)
