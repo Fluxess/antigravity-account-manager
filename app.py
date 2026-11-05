@@ -2,12 +2,15 @@ import os
 import sys
 import time
 import ctypes
+import threading
+import webbrowser
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from typing import Optional
 
 from core.manager import AccountManager
 from core.license import LicenseManager, PLANS, is_debugger_present
+from core.yookassa import YooKassaClient, PLAN_PRICES
 
 
 class ModernTheme:
@@ -40,11 +43,11 @@ class AccountManagerApp:
         self.root.minsize(760, 600)
         self.root.configure(bg=ModernTheme.BG)
 
-        # Single instance check via Win32 Mutex
         self._mutex = self._acquire_single_instance_mutex()
 
         self.manager = AccountManager()
         self.license_manager = LicenseManager()
+        self.yookassa = YooKassaClient()
         
         self._init_styles()
         self._build_header()
@@ -56,13 +59,11 @@ class AccountManagerApp:
         self.refresh_profiles()
         self._schedule_status_check()
 
-        # Startup Anti-Crack & Debugger Check
         if is_debugger_present():
             messagebox.showerror("Ошибка безопасности", "Обнаружена среда отладки / перехвата. Запуск отклонён.")
             self.root.destroy()
             return
 
-        # If not licensed on startup, show activation prompt
         lic = self.license_manager.check_license()
         if not lic["is_active"]:
             self.root.after(300, self.show_activation_modal)
@@ -71,7 +72,7 @@ class AccountManagerApp:
         try:
             kernel32 = ctypes.windll.kernel32
             mutex = kernel32.CreateMutexW(None, False, "AntigravityAccountManager_AppMutex")
-            if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            if kernel32.GetLastError() == 183:
                 messagebox.showwarning("Внимание", "Antigravity Account Manager уже запущен на вашем компьютере!")
                 sys.exit(0)
             return mutex
@@ -180,9 +181,25 @@ class AccountManagerApp:
         lic_btn_box = tk.Frame(self.lic_frame, bg="#161b24")
         lic_btn_box.pack(side=tk.RIGHT)
 
+        self.online_pay_btn = tk.Button(
+            lic_btn_box,
+            text="💳 Оплатить (ЮKassa)",
+            font=(ModernTheme.FONT_FAMILY, 8, "bold"),
+            bg="#34a853",
+            fg="#ffffff",
+            activebackground="#2d9348",
+            activeforeground="#ffffff",
+            relief=tk.FLAT,
+            padx=10,
+            pady=3,
+            cursor="hand2",
+            command=self.show_yookassa_modal
+        )
+        self.online_pay_btn.pack(side=tk.LEFT, padx=(0, 6))
+
         self.activate_btn = tk.Button(
             lic_btn_box,
-            text="🔑 Активировать ключ",
+            text="🔑 Ввести ключ",
             font=(ModernTheme.FONT_FAMILY, 8, "bold"),
             bg="#2b3240",
             fg="#8ab4f8",
@@ -298,26 +315,28 @@ class AccountManagerApp:
                 text=f"🟢 Подписка активна: {lic['message']} (до {lic['expires_str']})",
                 fg=ModernTheme.SUCCESS
             )
-            self.activate_btn.config(text="🔑 Продлить подписку")
+            self.activate_btn.config(text="🔑 Продлить ключ")
+            self.online_pay_btn.config(text="💳 Продлить онлайн")
         else:
             self.lic_label.config(
                 text="🔴 Доступ ограничен: подписка не активирована или истекла",
                 fg=ModernTheme.DANGER
             )
-            self.activate_btn.config(text="⚡ Активировать доступ")
+            self.activate_btn.config(text="🔑 Ввести ключ")
+            self.online_pay_btn.config(text="💳 Купить онлайн")
 
     def show_activation_modal(self):
         win = tk.Toplevel(self.root)
         win.title("Активация лицензии | Antigravity Account Manager")
-        win.geometry("560x540")
-        win.minsize(520, 500)
+        win.geometry("580x560")
+        win.minsize(540, 520)
         win.configure(bg="#15171c")
         win.transient(self.root)
         win.grab_set()
 
         win.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() - 560) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - 540) // 2
+        x = self.root.winfo_x() + (self.root.winfo_width() - 580) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 560) // 2
         win.geometry(f"+{max(0, x)}+{max(0, y)}")
 
         pad_frame = tk.Frame(win, bg="#15171c", padx=24, pady=20)
@@ -333,18 +352,18 @@ class AccountManagerApp:
 
         tk.Label(
             pad_frame,
-            text="Для работы с неограниченным пулом аккаунтов и ротации лимитов активируйте лицензионный ключ.",
+            text="Для работы с пулом аккаунтов и ротации лимитов оплатите онлайн или введите лицензионный ключ.",
             font=(ModernTheme.FONT_FAMILY, 9),
             fg="#9aa0a6",
             bg="#15171c",
-            wraplength=500,
+            wraplength=520,
             justify=tk.LEFT
-        ).pack(anchor="w", pady=(4, 14))
+        ).pack(anchor="w", pady=(4, 12))
 
         # Tariffs Grid
         t_box = tk.LabelFrame(pad_frame, text=" Доступные тарифы ", font=(ModernTheme.FONT_FAMILY, 9, "bold"),
                               fg="#9aa0a6", bg="#15171c", padx=10, pady=8)
-        t_box.pack(fill=tk.X, pady=(0, 14))
+        t_box.pack(fill=tk.X, pady=(0, 12))
 
         t_row = tk.Frame(t_box, bg="#15171c")
         t_row.pack(fill=tk.X)
@@ -364,9 +383,27 @@ class AccountManagerApp:
             tk.Label(cell, text=period, font=(ModernTheme.FONT_FAMILY, 9, "bold"), fg="#f1f3f4", bg="#20232c").pack()
             tk.Label(cell, text=cost, font=(ModernTheme.FONT_FAMILY, 10, "bold"), fg="#4285f4", bg="#20232c").pack(pady=(2, 0))
 
+        # Direct Online Pay Button
+        online_box = tk.Frame(pad_frame, bg="#15171c")
+        online_box.pack(fill=tk.X, pady=(0, 12))
+
+        tk.Button(
+            online_box,
+            text="💳 ОПЛАТИТЬ ОНЛАЙН (ЮKASSA: СБП / КАРТЫ / SBERPAY)",
+            font=(ModernTheme.FONT_FAMILY, 10, "bold"),
+            bg="#34a853",
+            fg="#ffffff",
+            activebackground="#2d9348",
+            activeforeground="#ffffff",
+            relief=tk.FLAT,
+            pady=8,
+            cursor="hand2",
+            command=lambda: [win.destroy(), self.show_yookassa_modal()]
+        ).pack(fill=tk.X)
+
         # HWID box
-        hwid_frame = tk.Frame(pad_frame, bg="#1e2129", padx=12, pady=10)
-        hwid_frame.pack(fill=tk.X, pady=(0, 14))
+        hwid_frame = tk.Frame(pad_frame, bg="#1e2129", padx=12, pady=8)
+        hwid_frame.pack(fill=tk.X, pady=(0, 12))
 
         tk.Label(
             hwid_frame,
@@ -412,7 +449,7 @@ class AccountManagerApp:
         # Key Input Box
         tk.Label(
             pad_frame,
-            text="Введите лицензионный ключ:",
+            text="Или введите уже купленный лицензионный ключ:",
             font=(ModernTheme.FONT_FAMILY, 9, "bold"),
             fg="#f1f3f4",
             bg="#15171c"
@@ -427,7 +464,7 @@ class AccountManagerApp:
             relief=tk.FLAT,
             bd=6
         )
-        key_entry.pack(fill=tk.X, pady=(6, 14))
+        key_entry.pack(fill=tk.X, pady=(6, 12))
 
         def do_activate():
             entered = key_entry.get().strip()
@@ -445,7 +482,7 @@ class AccountManagerApp:
 
         tk.Button(
             pad_frame,
-            text="⚡ АКТИВИРОВАТЬ ДОСТУП",
+            text="⚡ АКТИВИРОВАТЬ ВВЕДЁННЫЙ КЛЮЧ",
             font=(ModernTheme.FONT_FAMILY, 10, "bold"),
             bg="#4285f4",
             fg="#ffffff",
@@ -457,13 +494,194 @@ class AccountManagerApp:
             command=do_activate
         ).pack(fill=tk.X)
 
+    def show_yookassa_modal(self):
+        """Dedicated interactive YooKassa payment checkout window with auto-activation."""
+        pay_win = tk.Toplevel(self.root)
+        pay_win.title("Оплата онлайн через ЮKassa | Antigravity Manager")
+        pay_win.geometry("540x560")
+        pay_win.minsize(500, 520)
+        pay_win.configure(bg="#15171c")
+        pay_win.transient(self.root)
+        pay_win.grab_set()
+
+        pay_win.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 540) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 560) // 2
+        pay_win.geometry(f"+{max(0, x)}+{max(0, y)}")
+
+        pad = tk.Frame(pay_win, bg="#15171c", padx=24, pady=20)
+        pad.pack(fill=tk.BOTH, expand=True)
+
         tk.Label(
-            pad_frame,
-            text="Ключ выдается автоматически после оплаты у продавца.",
-            font=(ModernTheme.FONT_FAMILY, 8),
-            fg="#5f6368",
+            pad,
+            text="💳 Оплата онлайн (ЮKassa)",
+            font=(ModernTheme.FONT_FAMILY, 15, "bold"),
+            fg="#ffffff",
             bg="#15171c"
-        ).pack(pady=(12, 0))
+        ).pack(anchor="w")
+
+        tk.Label(
+            pad,
+            text="Выберите тариф. После успешной оплаты в браузере доступ активируется автоматически!",
+            font=(ModernTheme.FONT_FAMILY, 9),
+            fg="#9aa0a6",
+            bg="#15171c",
+            wraplength=480,
+            justify=tk.LEFT
+        ).pack(anchor="w", pady=(4, 14))
+
+        # Radio selection for tariff
+        plan_var = tk.StringVar(value="30d")
+        t_box = tk.LabelFrame(pad, text=" 1. Выберите тариф ", font=(ModernTheme.FONT_FAMILY, 9, "bold"),
+                              fg="#9aa0a6", bg="#15171c", padx=10, pady=8)
+        t_box.pack(fill=tk.X, pady=(0, 14))
+
+        for code, info in PLAN_PRICES.items():
+            r = tk.Radiobutton(
+                t_box,
+                text=f"{info['label']} — {info['description'].split('—')[-1].strip()}",
+                variable=plan_var,
+                value=code,
+                font=(ModernTheme.FONT_FAMILY, 9, "bold" if code == "30d" else "normal"),
+                fg="#4285f4" if code == "30d" else ModernTheme.TEXT_MAIN,
+                bg="#15171c",
+                selectcolor="#20232c",
+                activebackground="#15171c",
+                activeforeground="#ffffff",
+                cursor="hand2"
+            )
+            r.pack(anchor="w", pady=2)
+
+        # Email entry (optional)
+        email_box = tk.Frame(pad, bg="#15171c")
+        email_box.pack(fill=tk.X, pady=(0, 14))
+
+        tk.Label(
+            email_box,
+            text="Ваш Email (для чека об оплате):",
+            font=(ModernTheme.FONT_FAMILY, 9),
+            fg="#9aa0a6",
+            bg="#15171c"
+        ).pack(anchor="w")
+
+        email_entry = tk.Entry(
+            email_box,
+            font=("Segoe UI", 10),
+            bg="#20232c",
+            fg="#f1f3f4",
+            insertbackground="#ffffff",
+            relief=tk.FLAT,
+            bd=5
+        )
+        email_entry.pack(fill=tk.X, pady=(4, 0))
+
+        # Status text during polling
+        status_lbl = tk.Label(
+            pad,
+            text="",
+            font=(ModernTheme.FONT_FAMILY, 9, "bold"),
+            fg=ModernTheme.WARNING,
+            bg="#15171c",
+            wraplength=480
+        )
+        status_lbl.pack(pady=(0, 10))
+
+        # Action button
+        pay_btn = tk.Button(
+            pad,
+            text="🚀 ПЕРЕЙТИ К ОПЛАТЕ В ЮKASSA",
+            font=(ModernTheme.FONT_FAMILY, 10, "bold"),
+            bg="#34a853",
+            fg="#ffffff",
+            activebackground="#2d9348",
+            activeforeground="#ffffff",
+            relief=tk.FLAT,
+            pady=9,
+            cursor="hand2"
+        )
+        pay_btn.pack(fill=tk.X)
+
+        polling_active = [False]
+
+        def on_close():
+            polling_active[0] = False
+            pay_win.destroy()
+
+        pay_win.protocol("WM_DELETE_WINDOW", on_close)
+
+        def start_payment():
+            if not self.yookassa.is_configured():
+                messagebox.showerror(
+                    "ЮKassa не настроена",
+                    "Внимание: shopId ЮKassa пока не указан!\n\n"
+                    "Продавец должен сохранить shopId в настройках админки или файле yookassa_config.json."
+                )
+                return
+
+            chosen_plan = plan_var.get()
+            email = email_entry.get().strip() or None
+            hwid = self.license_manager.hwid
+
+            pay_btn.config(state=tk.DISABLED, text="Создание платежа...", bg="#555555")
+            status_lbl.config(text="Инициализация сессии оплаты ЮKassa...", fg=ModernTheme.PRIMARY)
+
+            ok, msg, data = self.yookassa.create_payment(chosen_plan, hwid, email)
+            if not ok:
+                pay_btn.config(state=tk.NORMAL, text="🚀 ПЕРЕЙТИ К ОПЛАТЕ В ЮKASSA", bg="#34a853")
+                status_lbl.config(text=f"Ошибка: {msg}", fg=ModernTheme.DANGER)
+                return
+
+            payment_id = data["payment_id"]
+            url = data["confirmation_url"]
+
+            # Open payment page in browser
+            webbrowser.open(url)
+            status_lbl.config(
+                text="⏳ Страница оплаты открыта в браузере.\nОплатите через СБП, Mir Pay или картой.\nОжидаем подтверждения от банка...",
+                fg=ModernTheme.WARNING
+            )
+            pay_btn.config(text="Ожидание оплаты...", bg="#4285f4")
+
+            polling_active[0] = True
+
+            def poll_status():
+                start_t = time.time()
+                while polling_active[0] and (time.time() - start_t < 900):  # 15 minutes timeout
+                    time.sleep(3)
+                    if not polling_active[0]:
+                        break
+
+                    chk_ok, current_status, pdata = self.yookassa.check_payment(payment_id)
+                    if not chk_ok:
+                        continue
+
+                    if current_status == "succeeded" or pdata.get("paid"):
+                        # Payment successful! Generate key and activate
+                        generated_key = LicenseManager.generate_key(chosen_plan, hwid)
+                        act_ok, act_msg = self.license_manager.activate_key(generated_key)
+                        
+                        def on_success():
+                            polling_active[0] = False
+                            pay_win.destroy()
+                            self.refresh_license_status()
+                            self.refresh_profiles()
+                            messagebox.showinfo(
+                                "🎉 Оплата прошла успешно!",
+                                f"Платеж подтвержден ЮKassa!\n\nЛицензия успешно активирована на вашем ПК.\nПриятного использования Antigravity!"
+                            )
+                        self.root.after(0, on_success)
+                        break
+
+                    elif current_status == "canceled":
+                        def on_cancel():
+                            status_lbl.config(text="❌ Платеж был отменён пользователем или банком.", fg=ModernTheme.DANGER)
+                            pay_btn.config(state=tk.NORMAL, text="Попробовать снова", bg="#34a853")
+                        self.root.after(0, on_cancel)
+                        break
+
+            threading.Thread(target=poll_status, daemon=True).start()
+
+        pay_btn.config(command=start_payment)
 
     def _require_license(self) -> bool:
         lic = self.license_manager.check_license()
@@ -757,7 +975,6 @@ class AccountManagerApp:
         self.refresh_profiles()
 
     def _schedule_status_check(self):
-        # Anti-debug ongoing verification
         if is_debugger_present():
             self.root.destroy()
             return

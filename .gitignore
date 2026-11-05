@@ -6,6 +6,7 @@ admin_keygen.py
 issued_keys.json
 license.dat
 .sec_state
+core/yookassa_config.json
 
 # =========================================================
 #  SESSIONS & CREDENTIALS (PREVENT GOOGLE SESSION LEAKS)
