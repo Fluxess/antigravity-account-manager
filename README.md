@@ -5,7 +5,7 @@
 
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue?style=for-the-badge&logo=windows)](https://github.com/Fluxess/antigravity-account-manager/releases)
 [![Antigravity](https://img.shields.io/badge/Antigravity-2.0%20%26%20IDE-orange?style=for-the-badge)](https://antigravity.google)
-[![License](https://img.shields.io/badge/License-Commercial-green?style=for-the-badge)](https://t.me/)
+[![License](https://img.shields.io/badge/License-Commercial-green?style=for-the-badge)](https://t.me/huntsvr)
 [![Release](https://img.shields.io/badge/Release-v1.0.0-purple?style=for-the-badge)](https://github.com/Fluxess/antigravity-account-manager/releases/latest)
 
 ---
@@ -62,7 +62,7 @@ flowchart LR
 | **Годовой** | **1 Год** | **399 ₽** | Максимальная выгода (всего 33 ₽ в месяц) |
 
 ### 🛒 Как приобрести ключ:
-* **Telegram:** [@ваш_контакт](https://t.me/) *(напишите менеджеру для моментальной оплаты картой/СБП/криптой)*
+* **Telegram:** [@huntsvr](https://t.me/huntsvr) *(напишите автору для моментальной покупки ключа картой/СБП/USDT или поддержки)*
 * **Автовыдача на маркетплейсах:** [FunPay / Plati.market](https://funpay.com/) *(мгновенное получение ключа сразу после оплаты)*
 
 ---
